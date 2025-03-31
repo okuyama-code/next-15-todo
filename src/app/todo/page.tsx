@@ -1,114 +1,160 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, KeyboardEvent, ChangeEvent } from "react";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { NavLink } from "../components/ui/navLink";
 import { usePathname } from "next/navigation";
+import { Todo, TodoCreateInput, todoService } from "@/services/todo.services";
 
-function TodoInput({
-  input,
-  setInput,
-  onAdd,
-}: {
+interface TodoInputProps {
   input: string;
   setInput: (val: string) => void;
   onAdd: () => void;
-}) {
+}
+
+function TodoInput({ input, setInput, onAdd }: TodoInputProps) {
+  const handleKeyPress = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      onAdd();
+    }
+  };
+
   return (
     <div className="flex gap-2 mb-4">
       <Input
         placeholder="新しいタスクを入力..."
         value={input}
-        onChange={(e) => setInput(e.target.value)}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => setInput(e.target.value)}
+        onKeyPress={handleKeyPress}
       />
       <Button onClick={onAdd}>追加</Button>
     </div>
   );
 }
 
-function TodoItem({
-  todo,
-  index,
-  onDelete,
-  onEdit,
-}: {
-  todo: string;
-  index: number;
-  onDelete: (index: number) => void;
-  onEdit: (index: number, newTodo: string) => void;
-}) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [editText, setEditText] = useState(todo);
+interface TodoItemProps {
+  todo: Todo;
+  onDelete: (id: number) => void;
+  onEdit: (id: number, newTitle: string) => void;
+}
+
+function TodoItem({ todo, onDelete, onEdit }: TodoItemProps) {
+  const [isEditing, setIsEditing] = useState<boolean>(false);
+  const [editText, setEditText] = useState<string>(todo.title);
 
   const handleSave = () => {
-    onEdit(index, editText);
+    onEdit(todo.id, editText);
     setIsEditing(false);
+  };
+
+  const handleKeyPress = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      handleSave();
+    }
   };
 
   return (
     <Card>
       <CardContent className="p-4 flex justify-between items-center gap-2">
         {isEditing ? (
-          <Input value={editText} onChange={(e) => setEditText(e.target.value)} />
+          <Input
+            value={editText}
+            onChange={(e: ChangeEvent<HTMLInputElement>) => setEditText(e.target.value)}
+            onKeyPress={handleKeyPress}
+          />
         ) : (
-          <span>{todo}</span>
+          <span>{todo.title}</span>
         )}
         <div className="flex gap-2">
           {isEditing ? (
-            <Button color="green" onClick={handleSave}>
-              保存
-            </Button>
+            <Button onClick={handleSave}>保存</Button>
           ) : (
             <Button onClick={() => setIsEditing(true)}>編集</Button>
           )}
-          <Button color="red" onClick={() => onDelete(index)}>
-            削除
-          </Button>
+          <Button onClick={() => onDelete(todo.id)}>削除</Button>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function TodoList({
-  todos,
-  onDelete,
-  onEdit,
-}: {
-  todos: string[];
-  onDelete: (index: number) => void;
-  onEdit: (index: number, newTodo: string) => void;
-}) {
+interface TodoListProps {
+  todos: Todo[];
+  onDelete: (id: number) => void;
+  onEdit: (id: number, newTitle: string) => void;
+}
+
+function TodoList({ todos, onDelete, onEdit }: TodoListProps) {
   return (
     <div className="space-y-2">
-      {todos.map((todo, index) => (
-        <TodoItem key={index} index={index} todo={todo} onDelete={onDelete} onEdit={onEdit} />
+      {todos.map((todo) => (
+        <TodoItem key={todo.id} todo={todo} onDelete={onDelete} onEdit={onEdit} />
       ))}
     </div>
   );
 }
 
 export default function TodoApp() {
-  const [todos, setTodos] = useState<string[]>([]);
-  const [input, setInput] = useState("");
+  const [todos, setTodos] = useState<Todo[]>([]);
+  const [input, setInput] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>("");
   const pathname = usePathname();
 
-  const handleAdd = () => {
+  // Fetch todos when component mounts
+  useEffect(() => {
+    const fetchTodos = async () => {
+      try {
+        setLoading(true);
+        const data = await todoService.getAll();
+        setTodos(data);
+        setError("");
+      } catch (err) {
+        console.error("Error fetching todos:", err);
+        setError("Todoの取得に失敗しました。");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchTodos();
+  }, []);
+
+  const handleAdd = async () => {
     if (input.trim() === "") return;
-    setTodos([...todos, input]);
-    setInput("");
+
+    try {
+      const todoData: TodoCreateInput = { title: input };
+      const newTodo = await todoService.create(todoData);
+      setTodos([...todos, newTodo]);
+      setInput("");
+    } catch (err) {
+      console.error("Error adding todo:", err);
+      setError("Todoの追加に失敗しました。");
+    }
   };
 
-  const handleDelete = (index: number) => {
-    setTodos(todos.filter((_, i) => i !== index));
+  const handleDelete = async (id: number) => {
+    try {
+      await todoService.delete(id);
+      setTodos(todos.filter((todo) => todo.id !== id));
+    } catch (err) {
+      console.error("Error deleting todo:", err);
+      setError("Todoの削除に失敗しました。");
+    }
   };
 
-  const handleEdit = (index: number, newTodo: string) => {
-    const updated = [...todos];
-    updated[index] = newTodo;
-    setTodos(updated);
+  const handleEdit = async (id: number, newTitle: string) => {
+    try {
+      const todoData: TodoCreateInput = { title: newTitle };
+      const updatedTodo = await todoService.update(id, todoData);
+      setTodos(todos.map((todo) => (todo.id === id ? updatedTodo : todo)));
+    } catch (err) {
+      console.error("Error updating todo:", err);
+      setError("Todoの更新に失敗しました。");
+    }
   };
 
   return (
@@ -117,7 +163,14 @@ export default function TodoApp() {
         <h1 className="text-2xl font-bold mb-4">Todo App</h1>
         {pathname === "/todo" && <NavLink href="/">Homeへ</NavLink>}
         <TodoInput input={input} setInput={setInput} onAdd={handleAdd} />
-        <TodoList todos={todos} onDelete={handleDelete} onEdit={handleEdit} />
+
+        {error && <div className="bg-red-100 text-red-700 p-3 rounded mb-4">{error}</div>}
+
+        {loading ? (
+          <div className="text-center py-4">読み込み中...</div>
+        ) : (
+          <TodoList todos={todos} onDelete={handleDelete} onEdit={handleEdit} />
+        )}
       </div>
     </main>
   );
